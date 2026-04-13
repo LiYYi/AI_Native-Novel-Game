@@ -29,3 +29,5 @@ class GameState:
     current_event: str = ""
     turn: int = 0
     choices: List[Choice] = field(default_factory=list)
+    # "zh" = Chinese narrative; "en" = English narrative (story + choice texts).
+    locale: str = "zh"

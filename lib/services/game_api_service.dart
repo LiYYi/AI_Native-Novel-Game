@@ -30,6 +30,7 @@ class GameApiResponse {
     required this.successRate,
     required this.shuraMode,
     required this.apiSchemaVersion,
+    required this.locale,
   });
 
   final String storyText;
@@ -48,6 +49,8 @@ class GameApiResponse {
   final double successRate;
   final bool shuraMode;
   final String apiSchemaVersion;
+  /// Server narrative locale: `zh` or `en`.
+  final String locale;
 }
 
 class GameApiService {
@@ -64,12 +67,12 @@ class GameApiService {
   final http.Client _client;
   final String baseUrl;
 
-  Future<GameApiResponse> startGame() async {
+  Future<GameApiResponse> startGame({String narrativeLocale = 'zh'}) async {
     final uri = Uri.parse('$baseUrl/start');
     final response = await _client.post(
       uri,
       headers: const {'Content-Type': 'application/json'},
-      body: '{}',
+      body: jsonEncode({'locale': narrativeLocale}),
     );
     return _parseResponse(response);
   }
@@ -90,6 +93,10 @@ class GameApiService {
     }
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return _gameApiFromJson(decoded, response.body);
+  }
+
+  GameApiResponse _gameApiFromJson(Map<String, dynamic> decoded, String rawBody) {
     final storyText = (decoded['story_text'] ?? decoded['story'] ?? '').toString();
     final attributes = (decoded['attributes'] as Map<String, dynamic>? ?? const <String, dynamic>{});
     final charm = (attributes['charm'] as num?)?.toInt() ?? 0;
@@ -108,6 +115,8 @@ class GameApiService {
     final successRate = (decoded['success_rate'] as num?)?.toDouble() ?? 0;
     final shuraMode = decoded['shura_mode'] == true;
     final apiSchemaVersion = (decoded['api_schema_version'] ?? '1.0').toString();
+    final localeRaw = (decoded['locale'] ?? 'zh').toString().toLowerCase();
+    final locale = (localeRaw == 'en') ? 'en' : 'zh';
     final rawChoices = (decoded['choices'] as List<dynamic>? ?? const <dynamic>[]);
     final choices = rawChoices.map((item) {
       if (item is Map<String, dynamic>) {
@@ -120,7 +129,7 @@ class GameApiService {
     }).toList(growable: false);
 
     if (storyText.isEmpty || choices.length < 3) {
-      throw Exception('Invalid backend response: ${response.body}');
+      throw Exception('Invalid backend response: $rawBody');
     }
 
     return GameApiResponse(
@@ -140,6 +149,7 @@ class GameApiService {
       successRate: successRate,
       shuraMode: shuraMode,
       apiSchemaVersion: apiSchemaVersion,
+      locale: locale,
     );
   }
 }

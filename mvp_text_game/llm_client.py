@@ -2,7 +2,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from minimax_service import MiniMaxService
 from models import Choice
@@ -16,7 +16,12 @@ class LLMOutput:
 
 
 class BaseLLMClient:
-    def generate(self, prompt: str) -> LLMOutput:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        narrative_locale: str = "zh",
+    ) -> LLMOutput:
         raise NotImplementedError
 
 
@@ -26,34 +31,42 @@ class MiniMaxLLMClient(BaseLLMClient):
         self.fallback_enabled = os.getenv("MINIMAX_FALLBACK_TO_MOCK", "true").lower() == "true"
         self.min_story_chars = int(os.getenv("MIN_STORY_CHARS", "200"))
 
-    def generate(self, prompt: str) -> LLMOutput:
-        text = ""
+    def generate(
+        self,
+        prompt: str,
+        *,
+        narrative_locale: str = "zh",
+    ) -> LLMOutput:
         try:
             text = self.service.generate_content(prompt)
         except Exception as exc:  # noqa: BLE001
             if not self.fallback_enabled:
                 raise
-            return _fallback_output(str(exc))
+            return _fallback_output(str(exc), self.min_story_chars, narrative_locale=narrative_locale)
 
         try:
             parsed = _parse_llm_output(text, min_story_chars=self.min_story_chars)
             return parsed
-        except Exception as exc:  # noqa: BLE001
-            # Retry once with stricter instruction when output is malformed/too short.
-            retry_prompt = (
-                f"{prompt}\n\n"
-                f"补充要求：story_paragraph 必须不少于 {self.min_story_chars} 字，"
+        except Exception:  # noqa: BLE001
+            retry_suffix = (
+                f"\n\n补充要求：story_paragraph 必须不少于 {self.min_story_chars} 个字符（计数方式见主提示）；"
+                "player_visible_language 与正文语言必须与上文输入 JSON 一致；"
                 "只输出合法 JSON，不要 markdown 代码块，不要额外解释。"
             )
+            retry_prompt = f"{prompt}{retry_suffix}"
+            retry_raw = ""
             try:
-                retry_text = self.service.generate_content(retry_prompt)
-                return _parse_llm_output(retry_text, min_story_chars=self.min_story_chars)
+                retry_raw = self.service.generate_content(retry_prompt)
+                return _parse_llm_output(retry_raw, min_story_chars=self.min_story_chars)
             except Exception as retry_exc:  # noqa: BLE001
-                # If the model returns valid but short narrative, ask it to continue.
+                recovery_raw = retry_raw if retry_raw else text
                 try:
-                    seed_story = _extract_story_seed(retry_text if "retry_text" in locals() else text)
-                    continued = self._continue_story_to_min(seed_story)
-                    choices = _extract_choices_or_default(retry_text if "retry_text" in locals() else text)
+                    seed_story = _extract_story_seed(recovery_raw)
+                    continued = self._continue_story_to_min(seed_story, narrative_locale=narrative_locale)
+                    choices = _extract_choices_or_default(
+                        recovery_raw,
+                        narrative_locale=narrative_locale,
+                    )
                     return LLMOutput(
                         story_paragraph=continued,
                         next_choices=choices,
@@ -62,10 +75,14 @@ class MiniMaxLLMClient(BaseLLMClient):
                 except Exception:
                     pass
                 if self.fallback_enabled:
-                    return _fallback_output(f"Invalid LLM output format: {retry_exc}", self.min_story_chars)
+                    return _fallback_output(
+                        f"Invalid LLM output format: {retry_exc}",
+                        self.min_story_chars,
+                        narrative_locale=narrative_locale,
+                    )
                 raise RuntimeError(f"Invalid LLM output: {text}") from retry_exc
 
-    def _continue_story_to_min(self, seed_story: str) -> str:
+    def _continue_story_to_min(self, seed_story: str, *, narrative_locale: str = "zh") -> str:
         story = _clean_text(seed_story)
         if len(story) >= self.min_story_chars:
             return story
@@ -73,9 +90,11 @@ class MiniMaxLLMClient(BaseLLMClient):
         attempts = 0
         while len(story) < self.min_story_chars and attempts < 2:
             remain = self.min_story_chars - len(story)
+            lang = "英文" if narrative_locale == "en" else "中文"
             continuation_prompt = (
-                "请基于以下文本继续续写，不要重复前文，不要输出JSON，"
-                f"直接输出中文正文续写内容，不少于 {remain} 字：\n\n{story}"
+                f"请基于以下文本继续续写，不要重复前文，不要输出 JSON，"
+                f"直接用{lang}输出正文续写，至少再写 {remain} 个字符"
+                f"（若目标语言为英文则按英文字符计）：\n\n{story}"
             )
             more = self.service.generate_content(continuation_prompt)
             story = f"{story}\n\n{_clean_text(more)}"
@@ -168,7 +187,11 @@ def _extract_story_seed(raw_text: str) -> str:
     return _clean_text(candidate)
 
 
-def _extract_choices_or_default(raw_text: str) -> List[Choice]:
+def _extract_choices_or_default(
+    raw_text: str,
+    *,
+    narrative_locale: str = "zh",
+) -> List[Choice]:
     candidate = raw_text.strip().replace("```json", "").replace("```", "")
     try:
         json_text = _extract_first_json_object(candidate)
@@ -189,6 +212,12 @@ def _extract_choices_or_default(raw_text: str) -> List[Choice]:
     except Exception:
         pass
 
+    if narrative_locale == "en":
+        return [
+            Choice(id="A", text="Push the exchange of leverage; tighten your grip", type="A"),
+            Choice(id="B", text="Shift to emotional rapport; earn trust", type="B"),
+            Choice(id="C", text="Hold position and let them move first", type="C"),
+        ]
     return [
         Choice(id="A", text="推进利益交换，强化掌控感", type="A"),
         Choice(id="B", text="转向情绪沟通，提升信任", type="B"),
@@ -243,36 +272,68 @@ def _normalize_state_delta(raw: object) -> dict:
     }
 
 
-def _fallback_output(reason: str, min_story_chars: int) -> LLMOutput:
-    base_story = (
-        "系统提示：在线模型暂不可用，已切换到本地兜底叙事。"
-        f"（原因：{reason}）"
-        "雨夜压着城市的玻璃幕墙，霓虹在潮湿空气里被拉成长线。"
-        "你站在包厢中央，指尖摩挲杯壁，缓慢扫过两位目标的眼神变化。"
-        "其中一人表情克制，唇角几乎没有弧度，却在你提及合作筹码时眼神明显收紧；"
-        "另一人把发丝拨到耳后，呼吸变得更轻，像在等待你给出下一句能够落地的承诺。"
-        "你没有急着表态，而是故意留出一拍沉默，让房间里的香水与雪松木气味先一步扩散，"
-        "让她们都意识到你不会被情绪牵着走。"
-        "你把话题拆成利益、风险、时机三段，先给出可验证的短期收益，再抛出可控的中期计划，"
-        "最后把长期绑定包装成双方都能接受的安全选项。"
-        "灯影落在你袖口，细微的布料摩擦声反而放大了此刻的压迫感。"
-        "你看见其中一人的指尖停在杯沿不再敲击，意味着她从防守进入计算；"
-        "另一人则把身体重心微微前倾，说明她愿意继续跟进这场博弈。"
-        "你知道这一回合的关键不在热烈，而在可兑现。"
-        "于是你把最后一句压低：规则由你们定，但节奏由我控。"
-        "空气里没有掌声，只有更安静的注视。"
-        "在这份注视中，你拿回了主动权，也把下一回合的风险提前锁进可管理区间。"
-    )
-    story = base_story
-    while len(story) < min_story_chars:
-        story += "你维持冷静与克制，继续通过微表情与停顿引导局势，让每一步都落在可计算的范围内。"
-
-    return LLMOutput(
-        story_paragraph=story,
-        next_choices=[
+def _fallback_output(reason: str, min_story_chars: int, narrative_locale: str = "zh") -> LLMOutput:
+    if narrative_locale == "en":
+        base_story = (
+            "System notice: the online model is unavailable; using local fallback prose. "
+            f"(Reason: {reason}) "
+            "Rain hammers the city glass while neon smears into long lines in the humid air. "
+            "You stand at the center of the private room, thumb tracing the glass, "
+            "watching how both targets track you. One keeps her face neutral, but her eyes tighten "
+            "the moment you mention leverage; the other tucks hair behind her ear, breathing lighter, "
+            "waiting for a promise she can cash. You let a deliberate beat of silence land first, "
+            "letting perfume and cedar fill the space so they feel you will not be pulled by mood alone. "
+            "You split the talk into upside, risk, and timing—short wins they can verify, "
+            "a mid-term plan they can control, and a long bind framed as mutual safety. "
+            "Light catches your cuff; the small sound of fabric turns the pressure up a notch. "
+            "One woman stops tapping her glass—she has moved from defense to calculation; "
+            "the other leans in slightly, willing to follow the thread. "
+            "You know this round is not about heat but about deliverables. "
+            "You lower your voice on the last line: they can write the rules, but you set the tempo. "
+            "There is no applause—only quieter attention. In that attention you reclaim initiative "
+            "and lock the next round's risk into something manageable."
+        )
+        pad = (
+            " You stay calm, using micro-pauses and measured eye contact so every step stays computable."
+        )
+        choices = [
+            Choice(id="A", text="Press the leverage trade; harden control", type="A"),
+            Choice(id="B", text="Pivot to rapport; buy trust", type="B"),
+            Choice(id="C", text="Stay still; let them show their hand", type="C"),
+        ]
+    else:
+        base_story = (
+            "系统提示：在线模型暂不可用，已切换到本地兜底叙事。"
+            f"（原因：{reason}）"
+            "雨夜压着城市的玻璃幕墙，霓虹在潮湿空气里被拉成长线。"
+            "你站在包厢中央，指尖摩挲杯壁，缓慢扫过两位目标的眼神变化。"
+            "其中一人表情克制，唇角几乎没有弧度，却在你提及合作筹码时眼神明显收紧；"
+            "另一人把发丝拨到耳后，呼吸变得更轻，像在等待你给出下一句能够落地的承诺。"
+            "你没有急着表态，而是故意留出一拍沉默，让房间里的香水与雪松木气味先一步扩散，"
+            "让她们都意识到你不会被情绪牵着走。"
+            "你把话题拆成利益、风险、时机三段，先给出可验证的短期收益，再抛出可控的中期计划，"
+            "最后把长期绑定包装成双方都能接受的安全选项。"
+            "灯影落在你袖口，细微的布料摩擦声反而放大了此刻的压迫感。"
+            "你看见其中一人的指尖停在杯沿不再敲击，意味着她从防守进入计算；"
+            "另一人则把身体重心微微前倾，说明她愿意继续跟进这场博弈。"
+            "你知道这一回合的关键不在热烈，而在可兑现。"
+            "于是你把最后一句压低：规则由你们定，但节奏由我控。"
+            "空气里没有掌声，只有更安静的注视。"
+            "在这份注视中，你拿回了主动权，也把下一回合的风险提前锁进可管理区间。"
+        )
+        pad = "你维持冷静与克制，继续通过微表情与停顿引导局势，让每一步都落在可计算的范围内。"
+        choices = [
             Choice(id="A", text="推进利益交换，强化掌控感", type="A"),
             Choice(id="B", text="转向情绪沟通，提升信任", type="B"),
             Choice(id="C", text="维持观望，等待对方先出牌", type="C"),
-        ],
+        ]
+
+    story = base_story
+    while len(story) < min_story_chars:
+        story += pad
+
+    return LLMOutput(
+        story_paragraph=story,
+        next_choices=choices,
         state_delta={"charm": 0, "wealth": 0, "reputation": 0},
     )

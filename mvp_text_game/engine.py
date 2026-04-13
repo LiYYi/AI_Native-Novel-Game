@@ -17,7 +17,7 @@ class GameEngine:
 
     def start_game(self, state: GameState) -> str:
         prompt = build_start_prompt(state)
-        llm_output = self.llm_client.generate(prompt)
+        llm_output = self.llm_client.generate(prompt, narrative_locale=state.locale)
         state.story_log.append(llm_output.story_paragraph)
         state.choices = llm_output.next_choices
         self.last_state_delta = {"charm": 0, "wealth": 0, "reputation": 0}
@@ -33,7 +33,7 @@ class GameEngine:
         apply_result(state, result)
 
         prompt = build_prompt(state, choice, result)
-        llm_output = self.llm_client.generate(prompt)
+        llm_output = self.llm_client.generate(prompt, narrative_locale=state.locale)
         llm_delta = _apply_llm_state_delta(state, choice, llm_output.state_delta)
 
         state.story_log.append(llm_output.story_paragraph)
@@ -57,10 +57,11 @@ def _find_choice(state: GameState, choice_id: str) -> Choice:
 def _format_turn_output(state: GameState, status_text: str) -> str:
     latest_story = state.story_log[-1] if state.story_log else ""
     choices_text = "\n".join([f"{c.id}. {c.text}" for c in state.choices])
+    story_line = f"剧情 => {latest_story}\n"
     return (
         f"\n[回合 {state.turn}] {status_text}\n"
         f"属性 => 魅力:{state.charm} 财力:{state.wealth} 声望:{state.reputation}\n"
-        f"剧情 => {latest_story}\n"
+        f"{story_line}"
         f"下一步选项:\n{choices_text}\n"
     )
 

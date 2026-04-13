@@ -1,6 +1,7 @@
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Dict
 
 from engine import GameEngine
 from llm_client import MiniMaxLLMClient
@@ -20,6 +21,54 @@ def _extract_choice(raw_choice: str) -> str:
     if text[0] in ("A", "B", "C"):
         return text[0]
     return text
+
+
+def _read_json_body(handler: BaseHTTPRequestHandler) -> Dict[str, Any]:
+    content_length = int(handler.headers.get("Content-Length", "0"))
+    raw = (
+        handler.rfile.read(content_length).decode("utf-8")
+        if content_length > 0
+        else "{}"
+    )
+    stripped = raw.strip()
+    if not stripped:
+        return {}
+    return json.loads(stripped)
+
+
+def _extract_locale(payload: dict) -> str:
+    raw = payload.get("locale") if "locale" in payload else payload.get("language")
+    if raw is None:
+        return "zh"
+    s = str(raw).strip().lower()
+    if s in ("en", "english", "en-us", "en-gb", "us", "uk"):
+        return "en"
+    return "zh"
+
+
+def _play_response_dict() -> dict:
+    return {
+        "api_schema_version": "1.1",
+        "story_text": _state.story_log[-1] if _state.story_log else "",
+        "story_length": len(_state.story_log[-1]) if _state.story_log else 0,
+        "model_used": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7"),
+        "state_delta": _engine.last_state_delta,
+        "result_type": _engine.last_result_type,
+        "reason_codes": _engine.last_reason_codes,
+        "success_rate": _engine.last_success_rate,
+        "shura_mode": _engine.last_shura_mode,
+        "choices": [
+            {"id": c.id, "text": c.text, "type": c.type}
+            for c in _state.choices[:3]
+        ],
+        "turn": _state.turn,
+        "attributes": {
+            "charm": _state.charm,
+            "wealth": _state.wealth,
+            "reputation": _state.reputation,
+        },
+        "locale": getattr(_state, "locale", "zh"),
+    }
 
 
 class GameHandler(BaseHTTPRequestHandler):
@@ -51,63 +100,22 @@ class GameHandler(BaseHTTPRequestHandler):
         try:
             if self.path == "/start":
                 global _state
-                _state = create_initial_state()
+                start_payload = _read_json_body(self)
+                loc = _extract_locale(start_payload)
+                _state = create_initial_state(locale=loc)
                 _engine.start_game(_state)
-                response = {
-                    "api_schema_version": "1.1",
-                    "story_text": _state.story_log[-1] if _state.story_log else "",
-                    "story_length": len(_state.story_log[-1]) if _state.story_log else 0,
-                    "model_used": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7"),
-                    "state_delta": _engine.last_state_delta,
-                    "result_type": _engine.last_result_type,
-                    "reason_codes": _engine.last_reason_codes,
-                    "success_rate": _engine.last_success_rate,
-                    "shura_mode": _engine.last_shura_mode,
-                    "choices": [
-                        {"id": c.id, "text": c.text, "type": c.type}
-                        for c in _state.choices[:3]
-                    ],
-                    "turn": _state.turn,
-                    "attributes": {
-                        "charm": _state.charm,
-                        "wealth": _state.wealth,
-                        "reputation": _state.reputation,
-                    },
-                }
+                response = _play_response_dict()
                 self._set_headers(200)
                 self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
                 return
 
-            content_length = int(self.headers.get("Content-Length", "0"))
-            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
-            payload = json.loads(raw_body)
+            payload = _read_json_body(self)
             choice = _extract_choice(str(payload.get("choice", "")))
             if choice not in ("A", "B", "C"):
                 raise ValueError("choice must be A/B/C")
 
             _engine.play_turn(_state, choice)
-
-            response = {
-                "api_schema_version": "1.1",
-                "story_text": _state.story_log[-1] if _state.story_log else "",
-                "story_length": len(_state.story_log[-1]) if _state.story_log else 0,
-                "model_used": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7"),
-                "state_delta": _engine.last_state_delta,
-                "result_type": _engine.last_result_type,
-                "reason_codes": _engine.last_reason_codes,
-                "success_rate": _engine.last_success_rate,
-                "shura_mode": _engine.last_shura_mode,
-                "choices": [
-                    {"id": c.id, "text": c.text, "type": c.type}
-                    for c in _state.choices[:3]
-                ],
-                "turn": _state.turn,
-                "attributes": {
-                    "charm": _state.charm,
-                    "wealth": _state.wealth,
-                    "reputation": _state.reputation,
-                },
-            }
+            response = _play_response_dict()
             self._set_headers(200)
             self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
         except Exception as exc:  # noqa: BLE001

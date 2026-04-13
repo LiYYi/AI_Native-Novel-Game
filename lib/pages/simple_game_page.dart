@@ -11,13 +11,20 @@ class SimpleGamePage extends StatefulWidget {
 }
 
 class _SimpleGamePageState extends State<SimpleGamePage> {
+  static const _zhIntro = '点击“开始游戏”生成初始剧情。';
+  static const _enIntro = 'Tap “Start game” to generate the opening scene.';
+
   final GameApiService _api = GameApiService();
   final ScrollController _scrollController = ScrollController();
 
-  String _storyText = '点击“开始游戏”生成初始剧情。';
+  String _storyText = _zhIntro;
   List<GameChoice> _choices = const [];
   String? _selectedChoiceId;
   bool _started = false;
+  /// Narrative language for the next `startGame` call (before game starts).
+  bool _englishNarrative = false;
+  /// Locale from server after start (`zh` / `en`); used for in-game UI strings.
+  String _sessionLocale = 'zh';
   bool _loading = false;
   String _error = '';
   int _charm = 3;
@@ -41,15 +48,29 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
     super.dispose();
   }
 
+  bool get _uiEnglish => _started ? (_sessionLocale == 'en') : _englishNarrative;
+
+  void _onNarrativeLanguageChanged(bool english) {
+    setState(() {
+      _englishNarrative = english;
+      if (!_started) {
+        _storyText = english ? _enIntro : _zhIntro;
+      }
+    });
+  }
+
   Future<void> _startGame() async {
     setState(() {
       _loading = true;
       _error = '';
     });
     try {
-      final result = await _api.startGame();
+      final result = await _api.startGame(
+        narrativeLocale: _englishNarrative ? 'en' : 'zh',
+      );
       setState(() {
         _started = true;
+        _sessionLocale = result.locale;
         _storyText = result.storyText;
         _choices = result.choices;
         _selectedChoiceId = null;
@@ -74,10 +95,11 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
         _error = e.toString();
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -99,15 +121,18 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
       _loading = true;
       _error = '';
       // Append player choice immediately for stronger feedback.
-      _storyText = '$_storyText\n\n你选择了：${selectedChoice.id}. ${selectedChoice.text}';
+      final choseLabel = _sessionLocale == 'en' ? 'You chose:' : '你选择了：';
+      _storyText = '$_storyText\n\n$choseLabel ${selectedChoice.id}. ${selectedChoice.text}';
       _selectedChoiceId = null;
     });
     _scrollToBottom();
 
+    final storyAfterChoice = _storyText;
     try {
       final result = await _api.playTurn(selectedChoice.id);
+      if (!mounted) return;
       setState(() {
-        _storyText = '$_storyText\n\n${result.storyText}';
+        _storyText = '$storyAfterChoice\n\n${result.storyText}';
         _choices = result.choices.take(3).toList(growable: false);
         _charm = result.charm;
         _wealth = result.wealth;
@@ -125,14 +150,17 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
         _apiSchemaVersion = result.apiSchemaVersion;
       });
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
-    } finally {
       if (!mounted) return;
       setState(() {
-        _loading = false;
+        _error = e.toString();
+        _storyText = storyAfterChoice;
       });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
     _scrollToBottom();
   }
@@ -180,11 +208,13 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                     await Clipboard.setData(ClipboardData(text: _storyText));
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('剧情已复制')),
+                      SnackBar(
+                        content: Text(_uiEnglish ? 'Story copied.' : '剧情已复制'),
+                      ),
                     );
                   },
                   icon: const Icon(Icons.copy, size: 16),
-                  label: const Text('复制'),
+                  label: Text(_uiEnglish ? 'Copy' : '复制'),
                 ),
               ],
             ),
@@ -298,14 +328,36 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
             }),
           const SizedBox(height: 4),
           if (!_started) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '中文',
+                  style: TextStyle(
+                    fontWeight: !_englishNarrative ? FontWeight.w800 : FontWeight.w400,
+                  ),
+                ),
+                Switch(
+                  value: _englishNarrative,
+                  onChanged: _loading ? null : _onNarrativeLanguageChanged,
+                ),
+                Text(
+                  'English',
+                  style: TextStyle(
+                    fontWeight: _englishNarrative ? FontWeight.w800 : FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             FilledButton(
               onPressed: _loading ? null : _startGame,
-              child: const Text('开始游戏'),
+              child: Text(_englishNarrative ? 'Start game' : '开始游戏'),
             ),
           ] else ...[
             FilledButton(
               onPressed: (_loading || _selectedChoiceId == null) ? null : _onConfirmTap,
-              child: const Text('确认'),
+              child: Text(_sessionLocale == 'en' ? 'Confirm' : '确认'),
             ),
           ],
           if (_loading) ...[

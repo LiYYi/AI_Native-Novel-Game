@@ -55,7 +55,7 @@ FEMALE_NAMES = [
 ]
 
 
-def create_initial_state() -> GameState:
+def create_initial_state(locale: str = "zh") -> GameState:
     scene_tpl = random.choice(SCENE_TEMPLATES)
     name_pool = random.sample(FEMALE_NAMES, k=2)
     npc_pool = random.sample(NPC_ARCHETYPES, k=2)
@@ -72,6 +72,20 @@ def create_initial_state() -> GameState:
             )
         )
 
+    loc = "en" if (locale or "zh").strip().lower() in ("en", "english", "us", "uk") else "zh"
+    if loc == "en":
+        placeholder_choices = [
+            Choice(id="A", text="Show resources and steer the conversation", type="A"),
+            Choice(id="B", text="Lean into emotional rapport; probe their real intent", type="B"),
+            Choice(id="C", text="Hold back and watch both of them closely", type="C"),
+        ]
+    else:
+        placeholder_choices = [
+            Choice(id="A", text="高调展示资源，主导话题节奏", type="A"),
+            Choice(id="B", text="切入情绪沟通，低声试探对方真实意图", type="B"),
+            Choice(id="C", text="暂缓表态，观察两人的反应", type="C"),
+        ]
+
     return GameState(
         charm=3,
         wealth=5,
@@ -81,9 +95,6 @@ def create_initial_state() -> GameState:
         scene=scene_tpl["scene"],
         current_event=scene_tpl["event"],
         turn=0,
-        choices=[
-            Choice(id="A", text="高调展示资源，主导话题节奏", type="A"),
-            Choice(id="B", text="切入情绪沟通，低声试探对方真实意图", type="B"),
-            Choice(id="C", text="暂缓表态，观察两人的反应", type="C"),
-        ],
+        choices=placeholder_choices,
+        locale=loc,
     )

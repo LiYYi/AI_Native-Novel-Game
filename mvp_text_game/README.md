@@ -60,10 +60,9 @@ python3 -m unittest discover -s tests -p "test_*.py"
 
 API endpoint:
 
-- `POST /start`
-- `POST /play`
-- body: `{"choice":"A"}` (A/B/C)
-- response:
+- `POST /start` — JSON response (MiniMax `generate_content`).
+- `POST /play` — body: `{"choice":"A"}` (A/B/C); one `application/json` response.
+- Response fields:
   - `story_text`: new story text
   - `choices`: next choices (A/B/C)
   - `api_schema_version`: API contract version
