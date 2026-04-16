@@ -6,6 +6,8 @@ import time
 import urllib.error
 import urllib.request
 
+import dotenv_mvp
+
 
 class MiniMaxService:
     """Independent MiniMax service: prompt in, text out."""
@@ -14,8 +16,14 @@ class MiniMaxService:
         self._load_dotenv_if_needed()
         self.api_key = os.getenv("MINIMAX_API_KEY", "")
         self.api_url = os.getenv("MINIMAX_API_URL", "https://api.minimax.chat/v1/text/chatcompletion_v2")
-        self.model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7")
+        self.model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
         self.timeout_seconds = int(os.getenv("MINIMAX_TIMEOUT_SECONDS", "30"))
+        # Documented for M2.x: separates interleaved thinking from assistant text (cleaner JSON in `content`).
+        self.reasoning_split = os.getenv("MINIMAX_REASONING_SPLIT", "true").lower() == "true"
+        # Prompt-level nudge: API has no officially supported “thinking off” switch for M2.x.
+        self.compact_reasoning_prompt = (
+            os.getenv("MINIMAX_COMPACT_REASONING_PROMPT", "true").lower() == "true"
+        )
         self.log_llm_io = os.getenv("MINIMAX_LOG_LLM_IO", "true").lower() == "true"
         # When true, response logs include message.reasoning_* (verbose). Default false trims them from logs only.
         self.log_full_minimax_response = (
@@ -23,30 +31,24 @@ class MiniMaxService:
         )
 
     def _load_dotenv_if_needed(self) -> None:
-        # Minimal .env loader to avoid adding extra dependencies.
-        if os.getenv("MINIMAX_API_KEY"):
-            return
-        env_path = os.path.join(os.path.dirname(__file__), ".env")
-        if not os.path.exists(env_path):
-            return
-        with open(env_path, "r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and key not in os.environ:
-                    os.environ[key] = value
+        dotenv_mvp.apply_mvp_dotenv()
 
-    @staticmethod
-    def _system_content() -> str:
-        return "你是文字游戏叙事函数，请仅输出JSON。"
+    def _system_content(self) -> str:
+        base = "你是文字游戏叙事函数，请仅输出JSON。"
+        if self.compact_reasoning_prompt:
+            base += (
+                " 不要输出思考过程、提纲或自我对话；在内部完成判断后，"
+                "直接给出符合格式的唯一 JSON 对象，且除该 JSON 外不要任何文字。"
+            )
+        return base
 
     def _user_content(self, prompt: str) -> str:
         min_story = int(os.getenv("MIN_STORY_CHARS", "200"))
+        prefix = ""
+        if self.compact_reasoning_prompt:
+            prefix = "请快速直接生成结果，避免冗长推理说明。\n"
         return (
+            f"{prefix}"
             "根据下方输入的 JSON 生成回复 JSON，结构固定为："
             '{"story_paragraph":"...","next_choices":[{"id":"A","text":"...","type":"A"},'
             '{"id":"B","text":"...","type":"B"},{"id":"C","text":"...","type":"C"}],'
@@ -66,7 +68,7 @@ class MiniMaxService:
         )
 
     def _build_body(self, prompt: str) -> dict:
-        return {
+        body: dict = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self._system_content()},
@@ -74,6 +76,9 @@ class MiniMaxService:
             ],
             "temperature": 0.7,
         }
+        if self.reasoning_split:
+            body["reasoning_split"] = True
+        return body
 
     def _log_request(self, body: dict) -> None:
         if not self.log_llm_io:
@@ -82,6 +87,7 @@ class MiniMaxService:
         print("\n" + "=" * 88)
         print(f"[MiniMax][REQUEST] {ts}")
         print(f"model: {self.model}")
+        print(f"reasoning_split: {body.get('reasoning_split', False)}")
         print("messages:")
         print(json.dumps(body["messages"], ensure_ascii=False, indent=2))
         print("=" * 88 + "\n")

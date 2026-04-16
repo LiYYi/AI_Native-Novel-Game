@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -42,6 +43,7 @@ class MiniMaxLLMClient(BaseLLMClient):
         except Exception as exc:  # noqa: BLE001
             if not self.fallback_enabled:
                 raise
+            print(f"[MiniMaxLLMClient] using fallback (API error): {exc!r}", file=sys.stderr)
             return _fallback_output(str(exc), self.min_story_chars, narrative_locale=narrative_locale)
 
         try:
@@ -75,6 +77,10 @@ class MiniMaxLLMClient(BaseLLMClient):
                 except Exception:
                     pass
                 if self.fallback_enabled:
+                    print(
+                        f"[MiniMaxLLMClient] using fallback (parse error): {retry_exc!r}",
+                        file=sys.stderr,
+                    )
                     return _fallback_output(
                         f"Invalid LLM output format: {retry_exc}",
                         self.min_story_chars,

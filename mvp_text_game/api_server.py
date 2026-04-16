@@ -3,6 +3,10 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 
+import dotenv_mvp
+
+dotenv_mvp.apply_mvp_dotenv()
+
 from engine import GameEngine
 from llm_client import MiniMaxLLMClient
 from state_factory import create_initial_state
@@ -51,7 +55,7 @@ def _play_response_dict() -> dict:
         "api_schema_version": "1.1",
         "story_text": _state.story_log[-1] if _state.story_log else "",
         "story_length": len(_state.story_log[-1]) if _state.story_log else 0,
-        "model_used": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7"),
+        "model_used": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed"),
         "state_delta": _engine.last_state_delta,
         "result_type": _engine.last_result_type,
         "reason_codes": _engine.last_reason_codes,

@@ -16,10 +16,14 @@ Minimal runnable game loop with clear modules:
 ```bash
 export MINIMAX_API_KEY=your_key
 export MINIMAX_API_URL=https://api.minimax.chat/v1/text/chatcompletion_v2
-export MINIMAX_MODEL=MiniMax-M2.7
+export MINIMAX_MODEL=MiniMax-M2.7-highspeed
 export MINIMAX_FALLBACK_TO_MOCK=true
 export MIN_STORY_CHARS=200
 export MINIMAX_TIMEOUT_SECONDS=90
+# Optional: separate model reasoning from final reply (API support may vary)
+export MINIMAX_REASONING_SPLIT=true
+# Optional: add brief prompts to discourage verbose reasoning in the visible reply
+export MINIMAX_COMPACT_REASONING_PROMPT=true
 cd mvp_text_game
 python3 main.py
 ```

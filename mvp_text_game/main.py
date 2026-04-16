@@ -1,3 +1,7 @@
+import dotenv_mvp
+
+dotenv_mvp.apply_mvp_dotenv()
+
 from engine import GameEngine
 from llm_client import MiniMaxLLMClient
 from state_factory import create_initial_state

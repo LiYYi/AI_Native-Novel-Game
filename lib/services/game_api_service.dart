@@ -58,11 +58,17 @@ class GameApiService {
     http.Client? client,
     String? baseUrl,
   })  : _client = client ?? http.Client(),
-        baseUrl = baseUrl ??
-            const String.fromEnvironment(
-              'GAME_API_BASE_URL',
-              defaultValue: 'http://127.0.0.1:8000',
-            );
+        baseUrl = _normalizeBaseUrl(
+          baseUrl ??
+              const String.fromEnvironment(
+                'GAME_API_BASE_URL',
+                defaultValue: 'http://127.0.0.1:8000',
+              ),
+        );
+
+  static String _normalizeBaseUrl(String url) {
+    return url.trim().replaceAll(RegExp(r'/+$'), '');
+  }
 
   final http.Client _client;
   final String baseUrl;

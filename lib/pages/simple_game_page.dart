@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_theme.dart';
 import '../services/game_api_service.dart';
 
 class SimpleGamePage extends StatefulWidget {
@@ -21,9 +22,7 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
   List<GameChoice> _choices = const [];
   String? _selectedChoiceId;
   bool _started = false;
-  /// Narrative language for the next `startGame` call (before game starts).
   bool _englishNarrative = false;
-  /// Locale from server after start (`zh` / `en`); used for in-game UI strings.
   String _sessionLocale = 'zh';
   bool _loading = false;
   String _error = '';
@@ -32,7 +31,7 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
   int _reputation = 2;
   int _turn = 0;
   int _storyLength = 0;
-  String _modelUsed = 'MiniMax-M2.7';
+  String _modelUsed = 'MiniMax-M2.7-highspeed';
   int _deltaCharm = 0;
   int _deltaWealth = 0;
   int _deltaReputation = 0;
@@ -120,7 +119,6 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
     setState(() {
       _loading = true;
       _error = '';
-      // Append player choice immediately for stronger feedback.
       final choseLabel = _sessionLocale == 'en' ? 'You chose:' : '你选择了：';
       _storyText = '$_storyText\n\n$choseLabel ${selectedChoice.id}. ${selectedChoice.text}';
       _selectedChoiceId = null;
@@ -176,6 +174,85 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
     });
   }
 
+  /// Pre-game: centered hero with language switch and large start CTA.
+  Widget _buildHomeCenter(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  _englishNarrative ? _enIntro : _zhIntro,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: AppColors.textSecondary,
+                        height: 1.5,
+                      ),
+                ),
+                const SizedBox(height: 32),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '中文',
+                      style: TextStyle(
+                        color: AppColors.contrast,
+                        fontWeight: !_englishNarrative ? FontWeight.w800 : FontWeight.w500,
+                      ),
+                    ),
+                    Switch(
+                      value: _englishNarrative,
+                      onChanged: _loading ? null : _onNarrativeLanguageChanged,
+                      activeThumbColor: AppColors.orangeGradientEnd,
+                      activeTrackColor: AppColors.orangeGradientStart.withValues(alpha: 0.5),
+                    ),
+                    Text(
+                      'English',
+                      style: TextStyle(
+                        color: AppColors.contrast,
+                        fontWeight: _englishNarrative ? FontWeight.w800 : FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                _GradientCtaButton(
+                  onPressed: _loading ? null : _startGame,
+                  label: _englishNarrative ? 'Start game' : '开始游戏',
+                  minHeight: 56,
+                  maxWidth: 320,
+                ),
+                if (_error.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    _error,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 13),
+                  ),
+                ],
+                if (_loading) ...[
+                  const SizedBox(height: 24),
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: AppColors.orangeGradientEnd,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget buildStoryArea(BuildContext context) {
     final ruleHints = <String>[
       '异性观测独占',
@@ -184,21 +261,23 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
       if (_shuraMode) '修罗场博弈中',
     ];
 
-    return Expanded(
-      child: SingleChildScrollView(
-        controller: _scrollController,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    // 20px horizontal page margins for story + meta (after game starts this is the only path).
+    const EdgeInsets scrollPadding = EdgeInsets.fromLTRB(20, 16, 20, 16);
+
+    return SingleChildScrollView(
+      controller: _scrollController,
+      padding: scrollPadding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             Row(
               children: [
                 Expanded(
                   child: Text(
                     '本轮字数：$_storyLength | 模型：$_modelUsed',
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 13,
-                      color: Theme.of(context).colorScheme.primary,
+                      color: AppColors.contrast,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -206,53 +285,66 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                 TextButton.icon(
                   onPressed: () async {
                     await Clipboard.setData(ClipboardData(text: _storyText));
-                    if (!mounted) return;
+                    if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(_uiEnglish ? 'Story copied.' : '剧情已复制'),
+                        behavior: SnackBarBehavior.floating,
+                        backgroundColor: AppColors.contrast,
                       ),
                     );
                   },
-                  icon: const Icon(Icons.copy, size: 16),
-                  label: Text(_uiEnglish ? 'Copy' : '复制'),
+                  icon: const Icon(Icons.copy, size: 16, color: AppColors.contrast),
+                  label: Text(_uiEnglish ? 'Copy' : '复制', style: const TextStyle(color: AppColors.contrast)),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
               '本轮变化：魅力 ${_formatDelta(_deltaCharm)} | 财力 ${_formatDelta(_deltaWealth)} | 声望 ${_formatDelta(_deltaReputation)}',
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 13,
-                color: Theme.of(context).colorScheme.secondary,
+                color: AppColors.textSecondary,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(10),
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: _shuraMode
-                      ? Colors.deepOrange.withValues(alpha: 0.5)
-                      : Theme.of(context).colorScheme.outlineVariant,
+                      ? AppColors.orangeGradientEnd.withValues(alpha: 0.45)
+                      : AppColors.dividerSoft,
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     '状态判定：${_readableResultType(_resultType)}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.contrast,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     '成功率：${(_successRate * 100).toStringAsFixed(0)}%${_shuraMode ? "  |  修罗场模式已触发" : ""}  |  协议v$_apiSchemaVersion',
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      color: AppColors.textSecondary,
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -264,12 +356,17 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                           (e) => Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surface,
+                              color: AppColors.canvas,
                               borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: AppColors.dividerSoft),
                             ),
                             child: Text(
                               e,
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.contrast,
+                              ),
                             ),
                           ),
                         )
@@ -279,92 +376,104 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                     const SizedBox(height: 6),
                     Text(
                       '命中规则：${_reasonCodes.map(_readableReasonCode).join("，")}',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               _storyText,
-              style: const TextStyle(fontSize: 16, height: 1.6),
+              style: const TextStyle(
+                fontSize: 16,
+                height: 1.6,
+                color: AppColors.contrast,
+              ),
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   Widget buildChoiceArea(BuildContext context) {
-    return Container(
-      color: Colors.grey.shade200,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_error.isNotEmpty) ...[
-            Text(
-              _error,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (_started)
-            ..._choices.map((choice) {
-              final isSelected = _selectedChoiceId == choice.id;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ChoiceChip(
-                  label: Text('${choice.id}. ${choice.text}'),
-                  selected: isSelected,
-                  onSelected: (_) => _onChoiceTap(choice),
-                ),
-              );
-            }),
-          const SizedBox(height: 4),
-          if (!_started) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '中文',
-                  style: TextStyle(
-                    fontWeight: !_englishNarrative ? FontWeight.w800 : FontWeight.w400,
+    return Material(
+      color: AppColors.card,
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          16,
+          20,
+          16 + MediaQuery.of(context).padding.bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_error.isNotEmpty && _started) ...[
+              Text(
+                _error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (_started)
+              ..._choices.map((choice) {
+                final isSelected = _selectedChoiceId == choice.id;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ChoiceChip(
+                    label: Text(
+                      '${choice.id}. ${choice.text}',
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : AppColors.contrast,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                    selected: isSelected,
+                    selectedColor: AppColors.contrast,
+                    backgroundColor: AppColors.canvas,
+                    side: const BorderSide(color: AppColors.dividerSoft),
+                    onSelected: (_) => _onChoiceTap(choice),
+                  ),
+                );
+              }),
+            const SizedBox(height: 4),
+            if (_started) ...[
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.contrast,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                Switch(
-                  value: _englishNarrative,
-                  onChanged: _loading ? null : _onNarrativeLanguageChanged,
-                ),
-                Text(
-                  'English',
-                  style: TextStyle(
-                    fontWeight: _englishNarrative ? FontWeight.w800 : FontWeight.w400,
+                onPressed: (_loading || _selectedChoiceId == null) ? null : _onConfirmTap,
+                child: Text(_sessionLocale == 'en' ? 'Confirm' : '确认'),
+              ),
+            ],
+            if (_loading && _started) ...[
+              const SizedBox(height: 8),
+              const Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: AppColors.orangeGradientEnd,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            FilledButton(
-              onPressed: _loading ? null : _startGame,
-              child: Text(_englishNarrative ? 'Start game' : '开始游戏'),
-            ),
-          ] else ...[
-            FilledButton(
-              onPressed: (_loading || _selectedChoiceId == null) ? null : _onConfirmTap,
-              child: Text(_sessionLocale == 'en' ? 'Confirm' : '确认'),
-            ),
+              ),
+            ],
           ],
-          if (_loading) ...[
-            const SizedBox(height: 8),
-            const Center(child: CircularProgressIndicator()),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -372,10 +481,9 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.canvas,
       appBar: AppBar(
         toolbarHeight: 72,
-        elevation: 0,
-        backgroundColor: Theme.of(context).colorScheme.surface,
         titleSpacing: 12,
         title: Row(
           children: [
@@ -384,7 +492,7 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                 label: '魅力',
                 value: _charm.toString(),
                 icon: Icons.auto_awesome,
-                accentColor: Colors.purple,
+                accentColor: AppColors.orangeGradientEnd,
               ),
             ),
             const SizedBox(width: 6),
@@ -393,7 +501,7 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                 label: '财力',
                 value: _wealth.toString(),
                 icon: Icons.account_balance_wallet,
-                accentColor: Colors.amber.shade800,
+                accentColor: AppColors.contrast,
               ),
             ),
             const SizedBox(width: 6),
@@ -402,7 +510,7 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                 label: '声望',
                 value: _reputation.toString(),
                 icon: Icons.workspace_premium,
-                accentColor: Colors.teal,
+                accentColor: AppColors.contrast,
               ),
             ),
             const SizedBox(width: 6),
@@ -411,21 +519,20 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
                 label: '回合',
                 value: _turn.toString(),
                 icon: Icons.timelapse,
-                accentColor: Colors.blueGrey,
+                accentColor: AppColors.textSecondary,
               ),
             ),
           ],
         ),
       ),
-      body: Padding(
-        padding: EdgeInsets.zero,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            buildStoryArea(context),
-            buildChoiceArea(context),
-          ],
-        ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _started ? buildStoryArea(context) : _buildHomeCenter(context),
+          ),
+          if (_started) buildChoiceArea(context),
+        ],
       ),
     );
   }
@@ -468,6 +575,67 @@ class _SimpleGamePageState extends State<SimpleGamePage> {
   }
 }
 
+class _GradientCtaButton extends StatelessWidget {
+  const _GradientCtaButton({
+    required this.onPressed,
+    required this.label,
+    this.minHeight = 56,
+    this.maxWidth = 320,
+  });
+
+  final VoidCallback? onPressed;
+  final String label;
+  final double minHeight;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxWidth,
+          minHeight: minHeight,
+          minWidth: 240,
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: AppColors.orangeGradient,
+            borderRadius: BorderRadius.circular(minHeight / 2),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.orangeGradientEnd.withValues(alpha: 0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(minHeight / 2),
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _StatusChip extends StatelessWidget {
   const _StatusChip({
     required this.label,
@@ -483,18 +651,16 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        border: Border.all(color: accentColor.withValues(alpha: 0.35)),
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.card,
+        border: Border.all(color: AppColors.dividerSoft),
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 6,
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
@@ -511,6 +677,7 @@ class _StatusChip extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
+                color: AppColors.contrast,
               ),
             ),
           ),
